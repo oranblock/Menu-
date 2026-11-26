@@ -1,0 +1,89 @@
+material {
+    name : "FoodTexturedSubsurfacePBR",
+    shadingModel : subsurface,
+    vertexDomain : object,
+    doubleSided : true,
+    variables : [
+        objPos,
+        objNorm
+    ],
+    requires : [
+        uv0,
+        color
+    ],
+    parameters : [
+        { type : sampler2d, name : albedoMap },
+        { type : sampler2d, name : normalMap },
+        { type : sampler2d, name : ormMap },
+        { type : float3,    name : tintColor },
+        { type : float3,    name : sssTint },
+        { type : float,     name : sssPower },
+        { type : float,     name : sssThickness },
+        { type : float,     name : normalScale },
+        { type : float2,    name : uvScale },
+        { type : float,     name : triplanarBlend } // 0.0 = UV0, 1.0 = Seamless Object-Space Triplanar
+    ]
+}
+
+vertex {
+    void materialVertex(inout MaterialVertexInputs material) {
+        material.objPos = getPosition();
+        #if defined(HAS_ATTRIBUTE_TANGENTS) && !defined(USE_OPTIMIZED_DEPTH_VERTEX_SHADER)
+        vec3 nObj = vec3(0.0, 1.0, 0.0);
+        toTangentFrame(mesh_tangents, nObj);
+        material.objNorm = vec4(nObj, 0.0);
+        #else
+        material.objNorm = vec4(0.0, 1.0, 0.0, 0.0);
+        #endif
+    }
+}
+
+fragment {
+    vec4 sampleTriplanar(sampler2D tex, vec3 p, vec3 w, vec2 scale) {
+        vec4 cx = texture(tex, p.zy * scale);
+        vec4 cy = texture(tex, p.xz * scale);
+        vec4 cz = texture(tex, p.xy * scale);
+        return cx * w.x + cy * w.y + cz * w.z;
+    }
+
+    void material(inout MaterialInputs material) {
+        vec2 uv = getUV0() * materialParams.uvScale;
+        vec3 p  = variable_objPos.xyz * 0.42;
+        vec3 w  = pow(abs(normalize(variable_objNorm.xyz)), vec3(6.0));
+        w /= max(w.x + w.y + w.z, 1e-4);
+
+        float tri = clamp(materialParams.triplanarBlend, 0.0, 1.0);
+
+        vec3 nUv  = texture(materialParams_normalMap, uv).xyz * 2.0 - 1.0;
+        vec3 nTri = sampleTriplanar(materialParams_normalMap, p, w, materialParams.uvScale).xyz * 2.0 - 1.0;
+        vec3 n    = mix(nUv, nTri, tri);
+        n.xy *= materialParams.normalScale;
+        material.normal = normalize(n);
+
+        prepareMaterial(material);
+
+        vec4 vCol   = getColor();
+        vec3 albUv  = texture(materialParams_albedoMap, uv).rgb;
+        vec3 albTri = sampleTriplanar(materialParams_albedoMap, p, w, materialParams.uvScale).rgb;
+        vec3 albedo = mix(albUv, albTri, tri) * materialParams.tintColor * vCol.rgb;
+
+        vec3 ormUv  = texture(materialParams_ormMap, uv).rgb;
+        vec3 ormTri = sampleTriplanar(materialParams_ormMap, p, w, materialParams.uvScale).rgb;
+        vec3 orm    = mix(ormUv, ormTri, tri);
+
+        float ao        = clamp(orm.r * vCol.a, 0.30, 1.0);
+        float roughness = clamp(orm.g, 0.10, 0.95);
+        float wetness   = clamp(orm.b, 0.0, 1.0);
+
+        albedo *= mix(1.0, 0.82, wetness);
+
+        material.baseColor        = vec4(albedo, 1.0);
+        material.roughness        = roughness;
+        material.metallic         = 0.0;
+        material.reflectance      = mix(0.36, 0.62, wetness);
+        material.ambientOcclusion = ao;
+        material.thickness        = clamp(materialParams.sssThickness, 0.06, 1.0);
+        material.subsurfaceColor  = materialParams.sssTint;
+        material.subsurfacePower  = materialParams.sssPower;
+    }
+}
