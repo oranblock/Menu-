@@ -1,0 +1,6 @@
+{
+  "name": "Menu Studio 3D",
+  "description": "Interactive 3D food dish builder using Filament and Jetpack Compose",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
